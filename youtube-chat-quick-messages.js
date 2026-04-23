@@ -1,9 +1,12 @@
 // ==UserScript==
 // @name         YouTube Chat Quick Messages
 // @namespace    http://tampermonkey.net/
-// @version      0.1
+// @version      0.2
 // @description  Adds configurable quick-send buttons below YouTube live chat
 // @author       vlfr1997 (https://github.com/vlfr1997)
+// @homepageURL  https://github.com/vlfr1997/YouTube-Chat-Quick-Message-Script
+// @updateURL    https://github.com/vlfr1997/YouTube-Chat-Quick-Message-Script/raw/refs/heads/main/youtube-chat-quick-messages.js
+// @downloadURL  https://github.com/vlfr1997/YouTube-Chat-Quick-Message-Script/raw/refs/heads/main/youtube-chat-quick-messages.js
 // @match        https://www.youtube.com/*
 // @grant        GM_setValue
 // @grant        GM_getValue
