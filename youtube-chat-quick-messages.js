@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Chat Quick Messages
 // @namespace    http://tampermonkey.net/
-// @version      0.2
+// @version      0.3
 // @description  Adds configurable quick-send buttons below YouTube live chat
 // @author       vlfr1997 (https://github.com/vlfr1997)
 // @homepageURL  https://github.com/vlfr1997/YouTube-Chat-Quick-Message-Script
@@ -20,23 +20,23 @@
   //  After that, buttons are saved in GM storage.
   // ─────────────────────────────────────────────
   const DEFAULT_BUTTONS = [
-    { name: "👋 Hello",  text: "Hello everyone! 👋" },
-    { name: "❤️ Love",   text: "This is amazing! ❤️" },
-    { name: "😂 Haha",   text: "hahaha 😂😂😂" },
-    { name: "🔥 Fire",   text: "LET'S GOOO 🔥🔥🔥" },
-    { name: "👏 GG",     text: "GG! Well played 👏" },
+    { name: "👋 Hello", text: "Hello everyone! 👋" },
+    { name: "❤️ Love", text: "This is amazing! ❤️" },
+    { name: "😂 Haha", text: "hahaha 😂😂😂" },
+    { name: "🔥 Fire", text: "LET'S GOOO 🔥🔥🔥" },
+    { name: "👏 GG", text: "GG! Well played 👏" },
   ];
 
   const STORAGE_KEY = 'ytqb_buttons';
-  const PANEL_ID    = 'yt-qb-panel';
-  const TOGGLE_ID   = 'yt-qb-toggle';
+  const PANEL_ID = 'yt-qb-panel';
+  const TOGGLE_ID = 'yt-qb-toggle';
   const SETTINGS_ID = 'yt-qb-settings-modal';
 
   /* ── Persistent config via GM storage ── */
   function loadConfig() {
     const saved = GM_getValue(STORAGE_KEY, null);
     if (saved) {
-      try { return JSON.parse(saved); } catch (_) {}
+      try { return JSON.parse(saved); } catch (_) { }
     }
     return DEFAULT_BUTTONS;
   }
@@ -134,6 +134,7 @@
         animation: ytQbPulse .33s ease infinite;
       }
       .yt-qb-btn.sent { background: #1a5c1a; border-color: #2ea82e; }
+      .yt-qb-btn.truncated { background: #5c4a00; border-color: #f0a500; }
       @keyframes ytQbPulse {
         0%, 100% { box-shadow: 0 0 0 0 rgba(74,158,255,.4); }
         50%       { box-shadow: 0 0 0 5px rgba(74,158,255,0); }
@@ -288,11 +289,11 @@
       btn.classList.remove('holding');
     }
 
-    btn.addEventListener('mousedown',   e => { e.preventDefault(); startSending(); });
-    btn.addEventListener('mouseup',     stopSending);
-    btn.addEventListener('mouseleave',  stopSending);
-    btn.addEventListener('touchstart',  e => { e.preventDefault(); startSending(); }, { passive: false });
-    btn.addEventListener('touchend',    stopSending);
+    btn.addEventListener('mousedown', e => { e.preventDefault(); startSending(); });
+    btn.addEventListener('mouseup', stopSending);
+    btn.addEventListener('mouseleave', stopSending);
+    btn.addEventListener('touchstart', e => { e.preventDefault(); startSending(); }, { passive: false });
+    btn.addEventListener('touchend', stopSending);
     btn.addEventListener('touchcancel', stopSending);
   }
 
@@ -408,10 +409,21 @@
         textInput.className = 'yt-qb-input';
         textInput.placeholder = 'Message to send in chat';
         textInput.value = item.text;
-        textInput.addEventListener('input', () => { rows[i].text = textInput.value; });
+        textInput.maxLength = YT_MAX_CHARS;
+
+        const counter = document.createElement('span');
+        counter.style.cssText = 'font-size:10px;color:#888;text-align:right;padding-right:2px;';
+        const updateCounter = () => {
+          const remaining = YT_MAX_CHARS - textInput.value.length;
+          counter.textContent = `${textInput.value.length}/${YT_MAX_CHARS}`;
+          counter.style.color = remaining <= 20 ? '#f0a500' : remaining === 0 ? '#ff4444' : '#888';
+        };
+        updateCounter();
+        textInput.addEventListener('input', () => { rows[i].text = textInput.value; updateCounter(); });
 
         inputs.appendChild(nameInput);
         inputs.appendChild(textInput);
+        inputs.appendChild(counter);
 
         // Move up
         const upBtn = document.createElement('button');
@@ -504,7 +516,13 @@
   }
 
   /* ── Send a message through YouTube's chat ── */
+  const YT_MAX_CHARS = 200;
+
   function sendChatMessage(text, btn, name) {
+    // Enforce YouTube's 200-character limit
+    const trimmed = text.length > YT_MAX_CHARS ? text.slice(0, YT_MAX_CHARS) : text;
+    if (text.length > YT_MAX_CHARS) flashBtn(btn, 'truncated', name);
+
     const iframe = document.querySelector('#chatframe');
     if (!iframe) return flashBtn(btn, false, name);
 
@@ -516,10 +534,10 @@
 
     input.focus();
     doc.execCommand('selectAll', false, null);
-    doc.execCommand('insertText', false, text);
+    doc.execCommand('insertText', false, trimmed);
 
     if (!input.textContent.trim()) {
-      input.textContent = text;
+      input.textContent = trimmed;
       input.dispatchEvent(new Event('input', { bubbles: true }));
     }
 
@@ -541,14 +559,16 @@
   }
 
   /* ── Brief visual feedback ── */
-  function flashBtn(btn, success, name) {
-    if (btn.classList.contains('holding')) return;
-    btn.classList.add('sent');
-    btn.textContent = success ? '✓ Sent' : '✗ Error';
+  function flashBtn(btn, state, name) {
+    if (btn.classList.contains('holding') && state !== 'truncated') return;
+    btn.classList.add(state === 'truncated' ? 'truncated' : 'sent');
+    if (state === true) btn.textContent = '✓ Sent';
+    else if (state === false) btn.textContent = '✗ Error';
+    else if (state === 'truncated') btn.textContent = '✂ Truncated';
     setTimeout(() => {
-      btn.classList.remove('sent');
+      btn.classList.remove('sent', 'truncated');
       btn.textContent = name;
-    }, 1200);
+    }, 1500);
   }
 
   /* ── Detect live stream — multiple signals ── */
@@ -569,7 +589,7 @@
       const doc = iframe.contentDocument || iframe.contentWindow?.document;
       // Make sure the doc is actually loaded and accessible
       if (doc && doc.body && doc.location.href !== 'about:blank') return doc;
-    } catch (_) {}
+    } catch (_) { }
     return null;
   }
 
@@ -630,8 +650,8 @@
   }
 
   /* ── Polling mount: retries every 500ms ── */
-  let pollTimer  = null;
-  let pollTicks  = 0;
+  let pollTimer = null;
+  let pollTicks = 0;
   const POLL_MAX = 30; // give up after 15 s (30 × 500 ms)
 
   function stopPolling() {
@@ -642,22 +662,26 @@
   function startPolling() {
     stopPolling();
     pollTimer = setInterval(() => {
-      if (!isLiveStream()) { unmount(); stopPolling(); return; }
+      // Navigated away from a watch page — clean up and stop
+      if (!location.pathname.startsWith('/watch')) { unmount(); stopPolling(); return; }
 
-      // Already mounted somewhere
+      // Already mounted somewhere — done
       const chatDoc = getChatDoc();
       if (document.getElementById('yt-qb-row') ||
-          (chatDoc && chatDoc.getElementById('yt-qb-row'))) {
+        (chatDoc && chatDoc.getElementById('yt-qb-row'))) {
         stopPolling(); return;
       }
 
-      // Give up after POLL_MAX ticks
+      // Give up after POLL_MAX ticks regardless
       if (++pollTicks > POLL_MAX) { stopPolling(); return; }
+
+      // Live stream UI not ready yet — keep waiting (don't abort)
+      if (!isLiveStream()) return;
 
       injectStyles();
 
-      // Try iframe first; fall back to main doc
-      if (!tryMountInIframe()) tryMountInMainDoc();
+      // Try main doc first (stable outer shell); fall back to iframe
+      if (!tryMountInMainDoc()) tryMountInIframe();
     }, 500);
   }
 
