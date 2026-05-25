@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Chat Quick Messages
 // @namespace    http://tampermonkey.net/
-// @version      0.3
+// @version      0.4
 // @description  Adds configurable quick-send buttons below YouTube live chat
 // @author       vlfr1997 (https://github.com/vlfr1997)
 // @homepageURL  https://github.com/vlfr1997/YouTube-Chat-Quick-Message-Script
@@ -28,9 +28,17 @@
   ];
 
   const STORAGE_KEY = 'ytqb_buttons';
+  const AUTOSEND_KEY = 'ytqb_autosend';
   const PANEL_ID = 'yt-qb-panel';
   const TOGGLE_ID = 'yt-qb-toggle';
   const SETTINGS_ID = 'yt-qb-settings-modal';
+
+  const DEFAULT_AUTOSEND = {
+    enabled: false,
+    selectedNames: [],
+    intervalSeconds: 60,
+  };
+  const MIN_AUTOSEND_SECONDS = 5;
 
   /* ── Persistent config via GM storage ── */
   function loadConfig() {
@@ -43,6 +51,18 @@
 
   function saveConfig(buttons) {
     GM_setValue(STORAGE_KEY, JSON.stringify(buttons));
+  }
+
+  function loadAutoSend() {
+    const saved = GM_getValue(AUTOSEND_KEY, null);
+    if (saved) {
+      try { return { ...DEFAULT_AUTOSEND, ...JSON.parse(saved) }; } catch (_) { }
+    }
+    return { ...DEFAULT_AUTOSEND };
+  }
+
+  function saveAutoSend(settings) {
+    GM_setValue(AUTOSEND_KEY, JSON.stringify(settings));
   }
 
   /* ── Inject global styles (once) ── */
@@ -252,6 +272,70 @@
       .yt-qb-action-btn.secondary:hover { background: #444; }
       .yt-qb-action-btn.add       { background: #1a4a1a; color: #7fff7f; }
       .yt-qb-action-btn.add:hover { background: #215221; }
+
+      #yt-qb-autosend {
+        background: #2a2a2a;
+        border-radius: 6px;
+        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .yt-qb-autosend-title { display: flex; align-items: center; }
+      .yt-qb-autosend-enable {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        user-select: none;
+      }
+      .yt-qb-autosend-enable input { accent-color: #ff0000; cursor: pointer; }
+      #yt-qb-autosend-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        max-height: 120px;
+        overflow-y: auto;
+        padding-right: 4px;
+      }
+      #yt-qb-autosend-list::-webkit-scrollbar { width: 6px; }
+      #yt-qb-autosend-list::-webkit-scrollbar-track { background: #333; border-radius: 3px; }
+      #yt-qb-autosend-list::-webkit-scrollbar-thumb { background: #555; border-radius: 3px; }
+      .yt-qb-autosend-option {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: #333;
+        border-radius: 16px;
+        padding: 4px 10px;
+        font-size: 12px;
+        cursor: pointer;
+        user-select: none;
+        max-width: 100%;
+      }
+      .yt-qb-autosend-option:hover { background: #3f3f3f; }
+      .yt-qb-autosend-option input { accent-color: #ff0000; cursor: pointer; }
+      .yt-qb-autosend-option span {
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .yt-qb-autosend-empty {
+        font-size: 11px;
+        color: #888;
+        font-style: italic;
+      }
+      .yt-qb-autosend-interval {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 11px;
+        color: #aaa;
+      }
+      .yt-qb-autosend-interval input { width: 90px; }
     `;
     document.head.appendChild(style);
   }
@@ -317,6 +401,40 @@
   function refreshPanel() {
     const panel = document.getElementById(PANEL_ID);
     if (panel) renderPanelButtons(panel, loadConfig());
+  }
+
+  /* ── Auto-send timer: fires the configured message at a fixed interval ── */
+  let autoSendTimer = null;
+
+  function stopAutoSend() {
+    if (autoSendTimer) { clearInterval(autoSendTimer); autoSendTimer = null; }
+  }
+
+  function applyAutoSend() {
+    stopAutoSend();
+    const s = loadAutoSend();
+    if (!s.enabled) return;
+    const initialNames = Array.isArray(s.selectedNames) ? s.selectedNames.filter(n => n && n.trim()) : [];
+    if (initialNames.length === 0) return;
+    const seconds = Math.max(MIN_AUTOSEND_SECONDS, Number(s.intervalSeconds) || DEFAULT_AUTOSEND.intervalSeconds);
+    let cursor = 0;
+    autoSendTimer = setInterval(() => {
+      if (!location.pathname.startsWith('/watch')) return;
+      const current = loadAutoSend();
+      if (!current.enabled) { stopAutoSend(); return; }
+      const names = Array.isArray(current.selectedNames) ? current.selectedNames.filter(n => n && n.trim()) : [];
+      if (names.length === 0) { stopAutoSend(); return; }
+      const buttons = loadConfig();
+      for (let i = 0; i < names.length; i++) {
+        const name = names[cursor % names.length];
+        cursor++;
+        const btn = buttons.find(b => b.name === name);
+        if (btn && btn.text && btn.text.trim()) {
+          sendChatMessage(btn.text, null, null);
+          return;
+        }
+      }
+    }, seconds * 1000);
   }
 
   /* ── Build the main UI (toggle row + panel) ── */
@@ -390,6 +508,8 @@
     const list = document.createElement('div');
     list.id = 'yt-qb-list';
 
+    let refreshAutoSendList = () => {};
+
     function buildRows() {
       list.replaceChildren();
       rows.forEach((item, i) => {
@@ -462,10 +582,93 @@
         row.appendChild(delBtn);
         list.appendChild(row);
       });
+      refreshAutoSendList();
     }
 
     buildRows();
     box.appendChild(list);
+
+    // Auto-send section
+    const autoSendState = loadAutoSend();
+    const initialSelectedNames = new Set(
+      Array.isArray(autoSendState.selectedNames) ? autoSendState.selectedNames : []
+    );
+    const selectedRows = new Set();
+    rows.forEach(r => { if (r.name && initialSelectedNames.has(r.name)) selectedRows.add(r); });
+
+    const autoSection = document.createElement('div');
+    autoSection.id = 'yt-qb-autosend';
+
+    const autoTitle = document.createElement('div');
+    autoTitle.className = 'yt-qb-autosend-title';
+
+    const enableLabel = document.createElement('label');
+    enableLabel.className = 'yt-qb-autosend-enable';
+    const enableCheckbox = document.createElement('input');
+    enableCheckbox.type = 'checkbox';
+    enableCheckbox.checked = !!autoSendState.enabled;
+    const enableText = document.createElement('span');
+    enableText.textContent = '⏰ Auto-send selected messages';
+    enableLabel.appendChild(enableCheckbox);
+    enableLabel.appendChild(enableText);
+    autoTitle.appendChild(enableLabel);
+    autoSection.appendChild(autoTitle);
+
+    const autoSendListEl = document.createElement('div');
+    autoSendListEl.id = 'yt-qb-autosend-list';
+
+    refreshAutoSendList = function () {
+      autoSendListEl.replaceChildren();
+      // Drop any selected rows that no longer exist in `rows`
+      [...selectedRows].forEach(r => { if (!rows.includes(r)) selectedRows.delete(r); });
+
+      const visible = rows.filter(r => (r.name && r.name.trim()) || (r.text && r.text.trim()));
+      if (visible.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'yt-qb-autosend-empty';
+        empty.textContent = 'Add buttons above, then pick which ones to auto-send.';
+        autoSendListEl.appendChild(empty);
+        return;
+      }
+      visible.forEach(item => {
+        const opt = document.createElement('label');
+        opt.className = 'yt-qb-autosend-option';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = selectedRows.has(item);
+        cb.addEventListener('change', () => {
+          if (cb.checked) selectedRows.add(item);
+          else selectedRows.delete(item);
+        });
+        const labelText = document.createElement('span');
+        labelText.textContent = (item.name && item.name.trim()) || '(unnamed)';
+        opt.appendChild(cb);
+        opt.appendChild(labelText);
+        autoSendListEl.appendChild(opt);
+      });
+    };
+
+    autoSection.appendChild(autoSendListEl);
+
+    const autoIntervalWrap = document.createElement('div');
+    autoIntervalWrap.className = 'yt-qb-autosend-interval';
+    const autoIntervalPrefix = document.createElement('span');
+    autoIntervalPrefix.textContent = 'Every';
+    const autoInterval = document.createElement('input');
+    autoInterval.className = 'yt-qb-input';
+    autoInterval.type = 'number';
+    autoInterval.min = String(MIN_AUTOSEND_SECONDS);
+    autoInterval.step = '1';
+    autoInterval.value = String(autoSendState.intervalSeconds || DEFAULT_AUTOSEND.intervalSeconds);
+    const intervalSuffix = document.createElement('span');
+    intervalSuffix.textContent = `seconds (min ${MIN_AUTOSEND_SECONDS}) — cycles through selected`;
+    autoIntervalWrap.appendChild(autoIntervalPrefix);
+    autoIntervalWrap.appendChild(autoInterval);
+    autoIntervalWrap.appendChild(intervalSuffix);
+    autoSection.appendChild(autoIntervalWrap);
+
+    refreshAutoSendList();
+    box.appendChild(autoSection);
 
     // Footer
     const footer = document.createElement('div');
@@ -496,7 +699,21 @@
     saveBtn.addEventListener('click', () => {
       const valid = rows.filter(r => r.name.trim() || r.text.trim());
       saveConfig(valid);
+
+      const parsedInterval = parseInt(autoInterval.value, 10);
+      const selectedNames = rows
+        .filter(r => selectedRows.has(r) && r.name && r.name.trim())
+        .map(r => r.name);
+      saveAutoSend({
+        enabled: enableCheckbox.checked,
+        selectedNames,
+        intervalSeconds: Number.isFinite(parsedInterval)
+          ? Math.max(MIN_AUTOSEND_SECONDS, parsedInterval)
+          : DEFAULT_AUTOSEND.intervalSeconds,
+      });
+
       refreshPanel();
+      applyAutoSend();
       closeSettings();
     });
 
@@ -560,6 +777,7 @@
 
   /* ── Brief visual feedback ── */
   function flashBtn(btn, state, name) {
+    if (!btn) return;
     if (btn.classList.contains('holding') && state !== 'truncated') return;
     btn.classList.add(state === 'truncated' ? 'truncated' : 'sent');
     if (state === true) btn.textContent = '✓ Sent';
@@ -698,12 +916,14 @@
   window.addEventListener('load', () => {
     startNavObserver();
     startPolling();
+    applyAutoSend();
   });
 
   document.addEventListener('yt-navigate-finish', () => {
     unmount();
     stopPolling();
     setTimeout(startPolling, 800);
+    applyAutoSend();
   });
 
 })();
